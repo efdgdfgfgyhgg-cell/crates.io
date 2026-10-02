@@ -1,0 +1,57 @@
+name: Contribution validation
+on:
+  push:
+    branches: ["validation/readme-fragment-links"]
+permissions:
+  contents: read
+jobs:
+  markdown:
+    if: github.repository == 'efdgdfgfgyhgg-cell/crates.io'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0031a57e49307e1f476d037e3d657028928cb3af
+          persist-credentials: false
+      - name: Install repository Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - name: Verify README link regression fails without the fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/crates_io_markdown/src/lib.rs')
+          s = p.read_text()
+          fixed = """        if let Some(clean) = url.strip_prefix('#') {
+                      if clean.is_empty() || clean.starts_with("user-content-") {
+                          return Some(Cow::Borrowed(url));
+                      }
+                      return Some(Cow::Owned(format!("#user-content-{clean}")));
+                  }
+          """
+          original = """        if let Some(clean) = url.strip_prefix('#') {
+                      if clean.starts_with("fn-") || clean.starts_with("fnref-") {
+                          return Some(Cow::Owned(format!("#user-content-{clean}")));
+                      }
+                      return Some(Cow::Borrowed(url));
+                  }
+          """
+          assert s.count(fixed) == 1
+          p.write_text(s.replace(fixed, original))
+          PY
+          set +e
+          cargo test --locked -p crates_io_markdown table_of_contents_link_resolves_to_heading > baseline.log 2>&1
+          result=$?
+          set -e
+          cat baseline.log
+          test "$result" -ne 0
+          grep -q 'snapshot assertion' baseline.log
+          grep -q 'table_of_contents_link_resolves_to_heading' baseline.log
+          git restore crates/crates_io_markdown/src/lib.rs
+      - name: Test fixed Markdown renderer
+        run: cargo test --locked -p crates_io_markdown
+      - name: Check Markdown renderer formatting
+        run: cargo fmt -p crates_io_markdown -- --check
+      - name: Lint Markdown renderer
+        run: cargo clippy --locked -p crates_io_markdown --all-targets -- -D warnings
