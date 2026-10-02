@@ -221,13 +221,10 @@ fn is_media_url(url: &str) -> MediaUrl {
 impl UrlRelativeEvaluate<'_> for SanitizeUrl {
     fn evaluate<'a>(&self, url: &'a str) -> Option<Cow<'a, str>> {
         if let Some(clean) = url.strip_prefix('#') {
-            // Handle auto-generated footnote links
-            if clean.starts_with("fn-") || clean.starts_with("fnref-") {
-                return Some(Cow::Owned(format!("#user-content-{clean}")));
+            if clean.is_empty() || clean.starts_with("user-content-") {
+                return Some(Cow::Borrowed(url));
             }
-
-            // Always allow fragment URLs.
-            return Some(Cow::Borrowed(url));
+            return Some(Cow::Owned(format!("#user-content-{clean}")));
         }
 
         if url.starts_with("::") {
@@ -660,6 +657,30 @@ There can also be some text in between!
     }
 
     #[test]
+    fn table_of_contents_link_resolves_to_heading() {
+        let text = "[Usage](#usage-and-documentation)\n\n# Usage and documentation\n";
+        assert_snapshot!(markdown_to_html(text, None, ""), @r##"
+        <p><a href="#user-content-usage-and-documentation" rel="nofollow noopener noreferrer">Usage</a></p>
+        <h1 id="user-content-usage-and-documentation">Usage and documentation<a href="#user-content-usage-and-documentation" aria-label="Link to heading 'Usage and documentation'" rel="nofollow noopener noreferrer"></a></h1>
+        "##);
+    }
+
+    #[test]
+    fn fragment_urls_use_the_readme_namespace() {
+        let sanitizer = SanitizeUrl::new(None, "");
+        for (input, expected) in [
+            ("#usage", "#user-content-usage"),
+            ("#fn-1", "#user-content-fn-1"),
+            ("#fnref-1", "#user-content-fnref-1"),
+            ("#user-content-usage", "#user-content-usage"),
+            ("#", "#"),
+            ("#with%20spaces", "#user-content-with%20spaces"),
+        ] {
+            assert_eq!(sanitizer.evaluate(input).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
     fn heading_anchor_is_accessible_and_resolves() {
         let text = "# My crate\n\nHello, world!\n";
         assert_snapshot!(markdown_to_html(text, None, ""), @r##"
@@ -686,7 +707,7 @@ There can also be some text in between!
         let text =
             "<h1><a href=\"#my-crate\" id=\"my-crate\"></a>My crate</h1>\n<p>Hello, world!</p>\n";
         assert_snapshot!(markdown_to_html(text, None, ""), @r##"
-        <h1><a href="#my-crate" id="user-content-my-crate" rel="nofollow noopener noreferrer"></a>My crate</h1>
+        <h1><a href="#user-content-my-crate" id="user-content-my-crate" rel="nofollow noopener noreferrer"></a>My crate</h1>
         <p>Hello, world!</p>
         "##);
     }
@@ -752,7 +773,7 @@ There can also be some text in between!
         <ul>
         <li><input type="checkbox" disabled=""> <code>c</code></li>
         <li><input type="checkbox" disabled=""> <a href="https://crates.io" rel="nofollow noopener noreferrer">link</a></li>
-        <li><input type="checkbox" disabled=""> <a href="#anchor" rel="nofollow noopener noreferrer">link</a></li>
+        <li><input type="checkbox" disabled=""> <a href="#user-content-anchor" rel="nofollow noopener noreferrer">link</a></li>
         </ul>
         "##);
     }
